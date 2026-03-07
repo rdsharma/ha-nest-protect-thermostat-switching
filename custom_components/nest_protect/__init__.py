@@ -41,6 +41,7 @@ from .pynest.models import (
     TopazBucket,
     WhereBucketValue,
 )
+from .services import async_register_services, async_unregister_services
 from .thermostat import (
     apply_remote_comfort_sensing,
     assign_runtime_official_thermostat_match,
@@ -175,6 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         thermostats=thermostats,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    async_register_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -209,6 +211,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except asyncio.CancelledError:
                     pass
             hass.data[DOMAIN].pop(entry.entry_id)
+            if not any(
+                isinstance(value, HomeAssistantNestProtectData)
+                for value in hass.data.get(DOMAIN, {}).values()
+            ):
+                async_unregister_services(hass)
 
     return unload_ok
 

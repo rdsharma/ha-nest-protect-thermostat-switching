@@ -1,0 +1,32 @@
+set_fan_timer:
+  name: Set fan timer
+  description: Run the paired official Nest thermostat fan for a fixed duration.
+  fields:
+    select_entity:
+      name: Active sensor select
+      description: Nest Protect Active temperature sensor select entity for the thermostat.
+      example: select.living_room_active_temperature_sensor
+      selector:
+        entity:
+          domain: select
+    thermostat_id:
+      name: Thermostat id
+      description: Unofficial Nest thermostat id used internally by the Nest Protect integration.
+      example: DEVICE_CCA7C1000022A6CF
+      selector:
+        text:
+    duration_minutes:
+      name: Duration
+      description: Fan timer duration in minutes. Use 0 to turn the fan timer off.
+      required: true
+      example: 15
+      selector:
+        select:
+          options:
+            - 0
+            - 15
+            - 30
+            - 45
+            - 60
+            - 120
+            - 240

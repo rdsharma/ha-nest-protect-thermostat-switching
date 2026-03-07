@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from dataclasses import dataclass, field
 
 from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
@@ -110,6 +111,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         raise ConfigEntryNotReady from exception
 
     data = await client.get_first_data(nest.access_token, nest.userid)
+    bucket_counts = Counter(bucket.type for bucket in data.updated_buckets)
+    LOGGER.debug("App launch bucket counts: %s", dict(bucket_counts))
 
     device_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
@@ -131,11 +134,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 areas[area.where_id] = area.name
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
+    official_thermostats = async_official_thermostats(hass)
     thermostats = build_thermostats(
         data.updated_buckets,
         areas,
-        async_official_thermostats(hass),
+        official_thermostats,
         entry.options.get(CONF_THERMOSTAT_LINKS),
+    )
+    LOGGER.debug(
+        "Discovered %s unofficial thermostats from %s device buckets and %s rcs_settings buckets; %s official Nest thermostat candidates",
+        len(thermostats),
+        bucket_counts.get(BucketType.DEVICE, 0),
+        bucket_counts.get(BucketType.RCS_SETTINGS, 0),
+        len(official_thermostats),
     )
 
     entry_data = HomeAssistantNestProtectData(

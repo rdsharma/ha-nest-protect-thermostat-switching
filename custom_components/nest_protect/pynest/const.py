@@ -54,7 +54,10 @@ FULL_NEST_REQUEST = {
     "known_bucket_types": [
         BucketType.BUCKETS,
         BucketType.METADATA,
+        BucketType.DEVICE,
         BucketType.KRYPTONITE,
+        BucketType.RCS_SETTINGS,
+        BucketType.SHARED,
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
         BucketType.WHERE,

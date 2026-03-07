@@ -21,7 +21,8 @@ class OfficialThermostatCandidate:
     """An official Home Assistant Nest thermostat device."""
 
     device_entry_id: str
-    device_identifier: str
+    device_identifier: tuple[str, ...]
+    device_identifier_key: str
     name: str | None
     suggested_area: str | None
 
@@ -41,7 +42,11 @@ def async_official_thermostats(
 
     for device in registry.devices.values():
         identifier = next(
-            (value for domain, value in device.identifiers if domain == NEST_DOMAIN),
+            (
+                tuple(identifier)
+                for identifier in device.identifiers
+                if len(identifier) >= 2 and identifier[0] == NEST_DOMAIN
+            ),
             None,
         )
         if identifier is None:
@@ -51,9 +56,10 @@ def async_official_thermostats(
         if model and "thermostat" not in model:
             continue
 
-        candidates[identifier] = OfficialThermostatCandidate(
+        candidates[_identifier_key(identifier)] = OfficialThermostatCandidate(
             device_entry_id=device.id,
             device_identifier=identifier,
+            device_identifier_key=_identifier_key(identifier),
             name=device.name_by_user or device.name,
             suggested_area=device.suggested_area,
         )
@@ -148,11 +154,15 @@ def official_thermostat_options(
 ) -> dict[str, str]:
     """Build option labels for thermostat pairing."""
     options: dict[str, str] = {}
-    for identifier, thermostat in official_thermostats.items():
-        label = thermostat.name or thermostat.suggested_area or identifier
+    for identifier_key, thermostat in official_thermostats.items():
+        label = (
+            thermostat.name
+            or thermostat.suggested_area
+            or thermostat.device_identifier[-1]
+        )
         if thermostat.suggested_area and thermostat.suggested_area not in label:
             label = f"{label} ({thermostat.suggested_area})"
-        options[identifier] = label
+        options[identifier_key] = label
     return options
 
 
@@ -234,6 +244,11 @@ def _match_official_thermostat(
             return matches[0]
 
     return None
+
+
+def _identifier_key(identifier: tuple[str, ...]) -> str:
+    """Return a stable, serializable key for an official Nest identifier."""
+    return "\x1f".join(identifier)
 
 
 def _sensor_bucket_id(sensor_ref: str) -> str:

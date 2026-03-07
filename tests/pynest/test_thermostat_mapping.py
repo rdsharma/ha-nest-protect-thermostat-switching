@@ -76,7 +76,8 @@ def test_build_thermostats_discovers_sensors_and_matches_official_device(
     official = {
         "enterprise-device-id": thermostat.OfficialThermostatCandidate(
             device_entry_id="device-entry-id",
-            device_identifier="enterprise-device-id",
+            device_identifier=("nest", "enterprise-device-id"),
+            device_identifier_key="enterprise-device-id",
             name="Hallway Thermostat",
             suggested_area="Hallway",
         )
@@ -85,7 +86,7 @@ def test_build_thermostats_discovers_sensors_and_matches_official_device(
     thermostats = thermostat.build_thermostats(buckets, areas, official)
 
     discovered = thermostats["DEVICE_CCA7C1000022A6CF"]
-    assert discovered.official_device_identifier == "enterprise-device-id"
+    assert discovered.official_device_identifier == ("nest", "enterprise-device-id")
     assert discovered.official_device_entry_id == "device-entry-id"
     assert list(discovered.sensors) == [
         "DEVICE_18B430CE7E5A5C06",
@@ -115,13 +116,15 @@ def test_manual_links_override_auto_match(pynest_import, integration_import) -> 
     official = {
         "first-id": thermostat.OfficialThermostatCandidate(
             device_entry_id="first-entry",
-            device_identifier="first-id",
+            device_identifier=("nest", "first-id"),
+            device_identifier_key="first-id",
             name="Upstairs",
             suggested_area="Hallway",
         ),
         "second-id": thermostat.OfficialThermostatCandidate(
             device_entry_id="second-entry",
-            device_identifier="second-id",
+            device_identifier=("nest", "second-id"),
+            device_identifier_key="second-id",
             name="Upstairs",
             suggested_area="Bedroom",
         ),
@@ -136,5 +139,5 @@ def test_manual_links_override_auto_match(pynest_import, integration_import) -> 
 
     assert (
         thermostats["DEVICE_CCA7C1000022A6CF"].official_device_identifier
-        == "second-id"
+        == ("nest", "second-id")
     )

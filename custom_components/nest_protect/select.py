@@ -222,7 +222,7 @@ class NestThermostatSensorSelect(SelectEntity):
     def _build_device_info(self, thermostat: ThermostatData) -> DeviceInfo:
         if thermostat.official_device_identifier:
             return DeviceInfo(
-                identifiers={(NEST_DOMAIN, thermostat.official_device_identifier)}
+                identifiers={thermostat.official_device_identifier}
             )
 
         return DeviceInfo(

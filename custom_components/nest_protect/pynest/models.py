@@ -379,7 +379,7 @@ class ThermostatData:
     serial_number: str | None = None
     available: bool = True
     sensors: dict[str, ThermostatSensor] = field(default_factory=dict)
-    official_device_identifier: str | None = None
+    official_device_identifier: tuple[str, ...] | None = None
     official_device_entry_id: str | None = None
     remote_comfort_sensing: RemoteComfortSensingSettings | None = None
 

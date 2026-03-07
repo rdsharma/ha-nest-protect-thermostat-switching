@@ -96,6 +96,7 @@ async def test_thermostat_select_exposes_sensor_metadata_attributes(hass) -> Non
         "thermostat_id": "DEVICE_CCA7C1000022A6CF",
         "active_sensor_id": "DEVICE_18B430CE7E5A5C06",
         "remembered_sensor_id": "DEVICE_18B430CE7E5A5C06",
+        "sensor_temperature_unit": "°C",
         "sensor_options": [
             {
                 "option": "Master Bedroom",

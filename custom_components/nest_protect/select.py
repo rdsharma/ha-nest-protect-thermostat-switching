@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
@@ -201,6 +202,7 @@ class NestThermostatSensorSelect(SelectEntity):
             "thermostat_id": self.thermostat.device_id,
             "active_sensor_id": self.thermostat.active_sensor_id,
             "remembered_sensor_id": self.thermostat.remembered_sensor_id,
+            "sensor_temperature_unit": UnitOfTemperature.CELSIUS,
             "sensor_options": sensor_details,
         }
 

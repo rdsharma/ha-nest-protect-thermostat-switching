@@ -226,6 +226,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         self._config_entry = config_entry
+        self._thermostat_field_map: dict[str, str] = {}
 
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
@@ -235,15 +236,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if entry_data is None or not entry_data.thermostats:
             return self.async_create_entry(title="", data=self._config_entry.options)
 
-        thermostat_field_map = {
-            thermostat_pairing_label(thermostat): thermostat.device_id
-            for thermostat in entry_data.thermostats.values()
-        }
-
         if user_input is not None:
             links = {
-                thermostat_field_map[field_label]: official_id
-                for field_label, official_id in user_input.items()
+                self._thermostat_field_map.get(field_key, field_key): official_id
+                for field_key, official_id in user_input.items()
                 if official_id
             }
             return self.async_create_entry(
@@ -259,6 +255,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             **official_thermostat_options(async_official_thermostats(self.hass)),
         }
         configured_links = self._config_entry.options.get(CONF_THERMOSTAT_LINKS, {})
+        self._thermostat_field_map = {
+            thermostat_pairing_label(thermostat): thermostat.device_id
+            for thermostat in entry_data.thermostats.values()
+        }
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -273,7 +273,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 )
-                for field_label, thermostat_id in sorted(thermostat_field_map.items())
+                for field_label, thermostat_id in sorted(
+                    self._thermostat_field_map.items()
+                )
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

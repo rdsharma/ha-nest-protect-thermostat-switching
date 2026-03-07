@@ -79,7 +79,7 @@ def test_build_thermostats_discovers_sensors_and_matches_official_device(
             device_identifier=("nest", "enterprise-device-id"),
             device_identifier_key="enterprise-device-id",
             name="Hallway Thermostat",
-            suggested_area="Hallway",
+            area_name="Hallway",
         )
     }
 
@@ -119,14 +119,14 @@ def test_manual_links_override_auto_match(pynest_import, integration_import) -> 
             device_identifier=("nest", "first-id"),
             device_identifier_key="first-id",
             name="Upstairs",
-            suggested_area="Hallway",
+            area_name="Hallway",
         ),
         "second-id": thermostat.OfficialThermostatCandidate(
             device_entry_id="second-entry",
             device_identifier=("nest", "second-id"),
             device_identifier_key="second-id",
             name="Upstairs",
-            suggested_area="Bedroom",
+            area_name="Bedroom",
         ),
     }
 

@@ -68,7 +68,6 @@ class NestEntity(Entity):
                 hw_version=(
                     "Wired" if self.bucket.value["wired_or_battery"] == 0 else "Battery"
                 ),
-                suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
                 + self.bucket.value["structure_id"],  # TODO change url based on device
             )
@@ -83,7 +82,6 @@ class NestEntity(Entity):
                 name=self._attr_name,
                 manufacturer="Google",
                 model=self.bucket.value.get("model"),
-                suggested_area=self.area,
             )
 
         return None

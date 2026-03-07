@@ -230,5 +230,4 @@ class NestThermostatSensorSelect(SelectEntity):
             manufacturer="Google",
             model="Thermostat",
             name=thermostat.name,
-            suggested_area=thermostat.where_name,
         )

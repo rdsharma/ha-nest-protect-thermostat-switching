@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from typing import Any, TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -15,6 +16,9 @@ from .pynest.thermostat_protocol import RemoteComfortSensingSettings
 
 _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 
+if TYPE_CHECKING:
+    from homeassistant.helpers.area_registry import AreaRegistry
+
 
 @dataclass(slots=True, frozen=True)
 class OfficialThermostatCandidate:
@@ -24,7 +28,7 @@ class OfficialThermostatCandidate:
     device_identifier: tuple[str, ...]
     device_identifier_key: str
     name: str | None
-    suggested_area: str | None
+    area_name: str | None
 
 
 def thermostat_update_signal(device_id: str) -> str:
@@ -38,6 +42,7 @@ def async_official_thermostats(
 ) -> dict[str, OfficialThermostatCandidate]:
     """Return official Nest thermostat candidates keyed by Nest device identifier."""
     registry = dr.async_get(hass)
+    area_registry = _async_area_registry(hass)
     candidates: dict[str, OfficialThermostatCandidate] = {}
 
     for device in registry.devices.values():
@@ -61,7 +66,7 @@ def async_official_thermostats(
             device_identifier=identifier,
             device_identifier_key=_identifier_key(identifier),
             name=device.name_by_user or device.name,
-            suggested_area=device.suggested_area,
+            area_name=_device_area_name(area_registry, device.area_id),
         )
 
     return candidates
@@ -157,11 +162,11 @@ def official_thermostat_options(
     for identifier_key, thermostat in official_thermostats.items():
         label = (
             thermostat.name
-            or thermostat.suggested_area
+            or thermostat.area_name
             or thermostat.device_identifier[-1]
         )
-        if thermostat.suggested_area and thermostat.suggested_area not in label:
-            label = f"{label} ({thermostat.suggested_area})"
+        if thermostat.area_name and thermostat.area_name not in label:
+            label = f"{label} ({thermostat.area_name})"
         options[identifier_key] = label
     return options
 
@@ -238,7 +243,7 @@ def _match_official_thermostat(
         matches = [
             candidate
             for candidate in candidates
-            if _normalize(candidate.suggested_area) == thermostat_area
+            if _normalize(candidate.area_name) == thermostat_area
         ]
         if len(matches) == 1:
             return matches[0]
@@ -249,6 +254,26 @@ def _match_official_thermostat(
 def _identifier_key(identifier: tuple[str, ...]) -> str:
     """Return a stable, serializable key for an official Nest identifier."""
     return "\x1f".join(identifier)
+
+
+def _device_area_name(
+    area_registry: AreaRegistry | Any | None, area_id: str | None
+) -> str | None:
+    """Resolve a device area id to a display name."""
+    if area_registry is None or area_id is None:
+        return None
+    if area := area_registry.async_get_area(area_id):
+        return area.name
+    return None
+
+
+def _async_area_registry(hass: HomeAssistant) -> AreaRegistry | Any | None:
+    """Return the area registry when available."""
+    try:
+        from homeassistant.helpers import area_registry
+    except ImportError:
+        return None
+    return area_registry.async_get(hass)
 
 
 def _sensor_bucket_id(sensor_ref: str) -> str:

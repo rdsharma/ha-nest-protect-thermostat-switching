@@ -7,6 +7,7 @@ import datetime
 from typing import Any
 
 from .enums import BucketType
+from .thermostat_protocol import RemoteComfortSensingSettings
 
 
 @dataclass
@@ -276,6 +277,7 @@ class NestEnvironment:
     name: str
     client_id: str
     host: str
+    grpc_host: str
 
 
 @dataclass
@@ -353,3 +355,44 @@ class FirstDataAPIResponse:
         self.updated_buckets = (
             [Bucket(**b) for b in self.updated_buckets] if self.updated_buckets else []
         )
+
+
+@dataclass
+class ThermostatSensor:
+    """A Nest thermostat sensor known to the unofficial API."""
+
+    sensor_id: str
+    name: str
+    bucket_key: str | None = None
+    current_temperature: float | None = None
+
+
+@dataclass
+class ThermostatData:
+    """A Nest thermostat with remote comfort sensing metadata."""
+
+    device_id: str
+    name: str
+    where_name: str | None
+    where_id: str | None
+    structure_id: str | None
+    serial_number: str | None = None
+    available: bool = True
+    sensors: dict[str, ThermostatSensor] = field(default_factory=dict)
+    official_device_identifier: str | None = None
+    official_device_entry_id: str | None = None
+    remote_comfort_sensing: RemoteComfortSensingSettings | None = None
+
+    @property
+    def active_sensor_id(self) -> str | None:
+        """Return the currently active remote sensor, if any."""
+        if self.remote_comfort_sensing is None:
+            return None
+        return self.remote_comfort_sensing.active_sensor_id
+
+    @property
+    def remembered_sensor_id(self) -> str | None:
+        """Return the remembered remote sensor, if any."""
+        if self.remote_comfort_sensing is None:
+            return None
+        return self.remote_comfort_sensing.remembered_sensor_id

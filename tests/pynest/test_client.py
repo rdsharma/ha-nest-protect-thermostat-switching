@@ -4,13 +4,13 @@ from unittest.mock import patch
 from aiohttp import web
 import pytest
 
-from custom_components.nest_protect.pynest.client import NestClient
-from custom_components.nest_protect.pynest.const import NEST_REQUEST
-
 
 @pytest.mark.enable_socket
-async def test_get_access_token_from_cookies_success(socket_enabled, aiohttp_client):
+async def test_get_access_token_from_cookies_success(
+    socket_enabled, aiohttp_client, pynest_import
+):
     """Test getting an access token."""
+    NestClient = pynest_import("client").NestClient
 
     async def make_token_response(request):
         return web.json_response(
@@ -35,8 +35,11 @@ async def test_get_access_token_from_cookies_success(socket_enabled, aiohttp_cli
 
 
 @pytest.mark.enable_socket
-async def test_get_access_token_from_cookies_error(socket_enabled, aiohttp_client):
+async def test_get_access_token_from_cookies_error(
+    socket_enabled, aiohttp_client, pynest_import
+):
     """Test failure while getting an access token."""
+    NestClient = pynest_import("client").NestClient
 
     async def make_token_response(request):
         return web.json_response(
@@ -53,8 +56,12 @@ async def test_get_access_token_from_cookies_error(socket_enabled, aiohttp_clien
 
 
 @pytest.mark.enable_socket
-async def test_get_first_data_success(socket_enabled, aiohttp_client):
+async def test_get_first_data_success(socket_enabled, aiohttp_client, pynest_import):
     """Test getting initial data from the API."""
+    client_module = pynest_import("client")
+    const_module = pynest_import("const")
+    NestClient = client_module.NestClient
+    NEST_REQUEST = const_module.NEST_REQUEST
 
     async def api_response(request):
         json = await request.json()

@@ -10,15 +10,23 @@ NEST_ENVIRONMENTS: dict[str, NestEnvironment] = {
         name="Google Account",
         client_id="733249279899-1gpkq9duqmdp55a7e5lft1pr2smumdla.apps.googleusercontent.com",  # Nest iOS application
         host="https://home.nest.com",
+        grpc_host="https://grpc-web.production.nest.com",
     ),
     Environment.FIELDTEST: NestEnvironment(
         name="Google Account (Field Test)",
         client_id="384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercontent.com",  # Test Flight Beta Nest iOS application
         host="https://home.ft.nest.com",
+        grpc_host="https://grpc-web.ft.nest.com",
     ),
 }
 
 DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS[Environment.PRODUCTION]
+
+GRPC_OBSERVE_ENDPOINT = "/nestlabs.gateway.v2.GatewayService/Observe"
+GRPC_BATCH_UPDATE_ENDPOINT = "/nestlabs.gateway.v1.TraitBatchApi/BatchUpdateState"
+NEST_GRPC_WEBAPP_VERSION = (
+    "NlAppSDKVersion/8.15.0 NlSchemaVersion/2.1.20-87-gce5742894"
+)
 
 # / URL for refresh token generation
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -29,8 +37,12 @@ NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt
 
 NEST_REQUEST = {
     "known_bucket_types": [
+        BucketType.DEVICE,
         BucketType.KRYPTONITE,
+        BucketType.RCS_SETTINGS,
+        BucketType.SHARED,
         BucketType.STRUCTURE,
+        BucketType.TRACK,
         BucketType.TOPAZ,
         BucketType.WHERE,
         BucketType.USER,

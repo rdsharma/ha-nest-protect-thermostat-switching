@@ -6,14 +6,18 @@ import logging
 from random import randint
 import time
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, AsyncIterator, cast
+from uuid import uuid4
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
     DEFAULT_NEST_ENVIRONMENT,
+    GRPC_BATCH_UPDATE_ENDPOINT,
+    GRPC_OBSERVE_ENDPOINT,
     NEST_AUTH_URL_JWT,
+    NEST_GRPC_WEBAPP_VERSION,
     NEST_REQUEST,
     TOKEN_URL,
     USER_AGENT,
@@ -34,6 +38,16 @@ from .models import (
     NestAuthResponse,
     NestEnvironment,
     NestResponse,
+    RemoteComfortSensingSettings,
+)
+from .thermostat_protocol import (
+    REMOTE_COMFORT_SENSING_OBSERVE_TYPE,
+    decode_observe_buffer,
+    decode_remote_comfort_sensing_settings,
+    encode_batch_update_state_request,
+    encode_observe_request,
+    RemoteComfortSensingObserveUpdate,
+    update_remote_comfort_sensing_payload,
 )
 
 _LOGGER = logging.getLogger(__package__)
@@ -236,6 +250,17 @@ class NestClient:
 
             return self.nest_session
 
+    async def ensure_authenticated(self) -> NestResponse:
+        """Return a current Nest session, refreshing auth when required."""
+        auth = self.auth
+        if auth is None or auth.is_expired():
+            auth = await self.get_access_token()
+
+        if self.nest_session is None or self.nest_session.is_expired():
+            self.nest_session = await self.authenticate(auth.access_token)
+
+        return self.nest_session
+
     async def get_first_data(
         self, nest_access_token: str, user_id: str, request: dict = NEST_REQUEST
     ) -> FirstDataAPIResponse:
@@ -329,6 +354,46 @@ class NestClient:
             # TODO type object
             return result
 
+    async def observe_remote_comfort_sensing(
+        self, nest_access_token: str
+    ) -> AsyncIterator[RemoteComfortSensingObserveUpdate]:
+        """Yield live thermostat remote comfort sensing updates."""
+        request = encode_observe_request((REMOTE_COMFORT_SENSING_OBSERVE_TYPE,))
+        headers = {
+            "Authorization": f"Basic {nest_access_token}",
+            "Content-Type": "application/x-protobuf",
+            "Origin": self.environment.host,
+            "Referer": f"{self.environment.host}/",
+            "User-Agent": USER_AGENT,
+            "request-id": str(uuid4()),
+            "X-Accept-Content-Transfer-Encoding": "base64",
+            "X-Accept-Response-Streaming": "true",
+            "X-nl-webapp-version": NEST_GRPC_WEBAPP_VERSION,
+        }
+
+        async with self.session.post(
+            f"{self.environment.grpc_host}{GRPC_OBSERVE_ENDPOINT}",
+            data=request,
+            headers=headers,
+            timeout=ClientTimeout(total=None, sock_connect=30),
+        ) as response:
+            if response.status == 401:
+                raise NotAuthenticatedException(await response.text())
+            if response.status != 200:
+                raise PynestException(
+                    f"{response.status} error while observing - {await response.text()}"
+                )
+
+            buffer = b""
+            async for chunk in response.content.iter_any():
+                if not chunk:
+                    continue
+
+                buffer += chunk.strip()
+                updates, buffer = decode_observe_buffer(buffer)
+                for update in updates:
+                    yield update
+
     async def update_objects(
         self,
         nest_access_token: str,
@@ -369,3 +434,55 @@ class NestClient:
             # TODO type object
 
             return result
+
+    async def async_set_active_temperature_sensor(
+        self,
+        thermostat_id: str,
+        current_settings: RemoteComfortSensingSettings,
+        target_sensor_id: str | None,
+    ) -> RemoteComfortSensingSettings:
+        """Set the active temperature sensor for a thermostat."""
+        nest_session = await self.ensure_authenticated()
+        updated_payload = update_remote_comfort_sensing_payload(
+            current_settings.raw_payload, target_sensor_id
+        )
+        request = encode_batch_update_state_request(
+            thermostat_id,
+            str(uuid4()),
+            updated_payload,
+        )
+
+        try:
+            await self._post_batch_update_state(nest_session.access_token, request)
+        except NotAuthenticatedException:
+            auth = await self.get_access_token()
+            self.nest_session = await self.authenticate(auth.access_token)
+            await self._post_batch_update_state(self.nest_session.access_token, request)
+
+        return decode_remote_comfort_sensing_settings(updated_payload)
+
+    async def _post_batch_update_state(
+        self, nest_access_token: str, request_payload: bytes
+    ) -> None:
+        """Post a raw protobuf BatchUpdateState request."""
+        async with self.session.post(
+            f"{self.environment.grpc_host}{GRPC_BATCH_UPDATE_ENDPOINT}",
+            data=request_payload,
+            headers={
+                "Authorization": f"Basic {nest_access_token}",
+                "Content-Type": "application/x-protobuf",
+                "User-Agent": USER_AGENT,
+            },
+            timeout=ClientTimeout(total=30),
+        ) as response:
+            if response.status == 401:
+                raise NotAuthenticatedException(await response.text())
+            if response.status != 200:
+                snippet = (await response.content.read(256)).decode(
+                    "utf-8", errors="ignore"
+                )
+                raise PynestException(
+                    f"{response.status} error while updating thermostat - {snippet}"
+                )
+
+            response.close()

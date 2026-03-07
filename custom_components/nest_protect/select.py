@@ -195,7 +195,7 @@ class NestThermostatSensorSelect(SelectEntity):
     def _async_handle_update(self, thermostat: ThermostatData) -> None:
         """Handle thermostat updates."""
         self._data.thermostats[self._thermostat_id] = thermostat
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
     def _sensor_options(self) -> list[str]:
         return list(self._sensor_id_by_option())

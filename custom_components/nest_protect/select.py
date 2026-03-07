@@ -180,6 +180,30 @@ class NestThermostatSensorSelect(SelectEntity):
         """Return the selectable options."""
         return [THERMOSTAT_OPTION, *self._sensor_options()]
 
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Return frontend-friendly metadata about thermostat sensor options."""
+        settings = self.thermostat.remote_comfort_sensing
+        sensor_details = []
+        option_by_sensor_id = self._option_by_sensor_id()
+
+        for sensor in self.thermostat.sensors.values():
+            sensor_details.append(
+                {
+                    "option": option_by_sensor_id.get(sensor.sensor_id, sensor.name),
+                    "sensor_id": sensor.sensor_id,
+                    "name": sensor.name,
+                    "temperature": sensor.current_temperature,
+                }
+            )
+
+        return {
+            "thermostat_id": self.thermostat.device_id,
+            "active_sensor_id": self.thermostat.active_sensor_id,
+            "remembered_sensor_id": self.thermostat.remembered_sensor_id,
+            "sensor_options": sensor_details,
+        }
+
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         settings = self.thermostat.remote_comfort_sensing

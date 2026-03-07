@@ -16,6 +16,9 @@ CONF_ACCOUNT_TYPE: Final = "account_type"
 CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_ISSUE_TOKEN: Final = "issue_token"
 CONF_COOKIES: Final = "cookies"
+CONF_THERMOSTAT_LINKS: Final = "thermostat_links"
+NEST_DOMAIN: Final = "nest"
+THERMOSTAT_UPDATE_SIGNAL_PREFIX: Final = f"{DOMAIN}_thermostat_"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,

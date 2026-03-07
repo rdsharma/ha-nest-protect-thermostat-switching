@@ -52,3 +52,56 @@ def pynest_import(monkeypatch):
         return import_module(qualified_name)
 
     return _import
+
+
+@pytest.fixture
+def integration_import(monkeypatch):
+    """Import a custom integration module with lightweight HA stubs."""
+    homeassistant = types.ModuleType("homeassistant")
+    homeassistant.__path__ = []
+    ha_const = types.ModuleType("homeassistant.const")
+    core = types.ModuleType("homeassistant.core")
+    helpers = types.ModuleType("homeassistant.helpers")
+    helpers.__path__ = []
+    device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+
+    class HomeAssistant:  # pragma: no cover - test stub
+        """Minimal HomeAssistant stub."""
+
+    def callback(func):
+        return func
+
+    class Platform:  # pragma: no cover - test stub
+        BINARY_SENSOR = "binary_sensor"
+        SENSOR = "sensor"
+        SELECT = "select"
+        SWITCH = "switch"
+
+    core.HomeAssistant = HomeAssistant
+    core.callback = callback
+    ha_const.Platform = Platform
+    device_registry.async_get = lambda hass: None
+
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant)
+    monkeypatch.setitem(sys.modules, "homeassistant.const", ha_const)
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers)
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.helpers.device_registry", device_registry
+    )
+
+    package_paths = {
+        "custom_components": _ROOT.parent.parent,
+        "custom_components.nest_protect": _ROOT,
+    }
+    for name, path in package_paths.items():
+        module = types.ModuleType(name)
+        module.__path__ = [str(path)]
+        monkeypatch.setitem(sys.modules, name, module)
+
+    def _import(module_name: str):
+        qualified_name = f"custom_components.nest_protect.{module_name}"
+        sys.modules.pop(qualified_name, None)
+        return import_module(qualified_name)
+
+    return _import

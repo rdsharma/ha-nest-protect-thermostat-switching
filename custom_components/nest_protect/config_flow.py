@@ -7,6 +7,7 @@ from typing import Any, cast
 from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 import voluptuous as vol
@@ -16,6 +17,7 @@ from .const import (
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
+    CONF_THERMOSTAT_LINKS,
     DOMAIN,
     LOGGER,
 )
@@ -23,6 +25,7 @@ from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
 from .pynest.exceptions import BadCredentialsException
+from .thermostat import async_official_thermostats, official_thermostat_options
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -32,6 +35,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     _config_entry: ConfigEntry | None = None
     _default_account_type: Environment = Environment.PRODUCTION
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry):
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -204,3 +213,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
 
         return await self.async_step_account_link(user_input)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options for Nest Protect."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, str] | None = None
+    ) -> FlowResult:
+        """Manage thermostat pairing overrides."""
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        if entry_data is None or not entry_data.thermostats:
+            return self.async_create_entry(title="", data=self._config_entry.options)
+
+        if user_input is not None:
+            links = {
+                thermostat_id: official_id
+                for thermostat_id, official_id in user_input.items()
+                if official_id
+            }
+            return self.async_create_entry(
+                title="",
+                data={
+                    **self._config_entry.options,
+                    CONF_THERMOSTAT_LINKS: links,
+                },
+            )
+
+        official_options = {
+            "": "Auto match",
+            **official_thermostat_options(async_official_thermostats(self.hass)),
+        }
+        configured_links = self._config_entry.options.get(CONF_THERMOSTAT_LINKS, {})
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    thermostat.device_id,
+                    default=configured_links.get(thermostat.device_id, ""),
+                ): vol.In(official_options)
+                for thermostat in entry_data.thermostats.values()
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

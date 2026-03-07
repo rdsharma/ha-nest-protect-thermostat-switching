@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
@@ -18,6 +18,7 @@ from .const import (
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
+    CONF_THERMOSTAT_LINKS,
     DOMAIN,
     LOGGER,
     PLATFORMS,
@@ -32,7 +33,19 @@ from .pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from .pynest.models import Bucket, FirstDataAPIResponse, TopazBucket, WhereBucketValue
+from .pynest.models import (
+    Bucket,
+    FirstDataAPIResponse,
+    ThermostatData,
+    TopazBucket,
+    WhereBucketValue,
+)
+from .thermostat import (
+    apply_remote_comfort_sensing,
+    async_official_thermostats,
+    build_thermostats,
+    thermostat_update_signal,
+)
 
 
 @dataclass
@@ -40,9 +53,11 @@ class HomeAssistantNestProtectData:
     """Nest Protect data stored in the Home Assistant data object."""
 
     devices: dict[str, Bucket]
-    areas: list[str, str]
+    areas: dict[str, str]
     client: NestClient
+    thermostats: dict[str, ThermostatData] = field(default_factory=dict)
     subscription_task: asyncio.Task | None = None
+    observe_task: asyncio.Task | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -116,11 +131,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 areas[area.where_id] = area.name
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
+    thermostats = build_thermostats(
+        data.updated_buckets,
+        areas,
+        async_official_thermostats(hass),
+        entry.options.get(CONF_THERMOSTAT_LINKS),
+    )
 
     entry_data = HomeAssistantNestProtectData(
         devices=devices,
         areas=areas,
         client=client,
+        thermostats=thermostats,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
@@ -130,6 +152,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
     )
+    if thermostats:
+        entry_data.observe_task = asyncio.create_task(
+            _async_observe_thermostats(hass, entry)
+        )
 
     return True
 
@@ -146,6 +172,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await entry_data.subscription_task
                 except asyncio.CancelledError:
                     # Task cancellation is expected during unload; ignore.
+                    pass
+            if entry_data.observe_task:
+                entry_data.observe_task.cancel()
+                try:
+                    await entry_data.observe_task
+                except asyncio.CancelledError:
                     pass
             hass.data[DOMAIN].pop(entry.entry_id)
 
@@ -306,6 +338,45 @@ async def _async_subscribe_for_data(
         LOGGER.exception(
             "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for 5 minutes."
         )
+
+
+async def _async_observe_thermostats(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Observe thermostat remote comfort sensing state."""
+    while entry.entry_id in hass.data.get(DOMAIN, {}):
+        entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+
+        try:
+            nest_session = await entry_data.client.ensure_authenticated()
+            async for update in entry_data.client.observe_remote_comfort_sensing(
+                nest_session.access_token
+            ):
+                if entry.entry_id not in hass.data.get(DOMAIN, {}):
+                    return
+
+                thermostat = entry_data.thermostats.get(update.thermostat_id)
+                if thermostat is None:
+                    continue
+
+                apply_remote_comfort_sensing(
+                    thermostat,
+                    update.settings,
+                    entry_data.devices,
+                    entry_data.areas,
+                )
+                async_dispatcher_send(
+                    hass,
+                    thermostat_update_signal(thermostat.device_id),
+                    thermostat,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exception:  # pylint: disable=broad-except
+            LOGGER.debug("Thermostat observe reconnect after error: %s", exception)
+            await asyncio.sleep(5)
+        else:
+            await asyncio.sleep(1)
 
 
 async def async_remove_config_entry_device(

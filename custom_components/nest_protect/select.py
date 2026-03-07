@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
-from .const import DOMAIN, LOGGER
+from .const import ATTRIBUTION, DOMAIN, LOGGER, NEST_DOMAIN
 from .entity import NestDescriptiveEntity
+from .pynest.models import ThermostatData
+from .pynest.thermostat_protocol import (
+    RCS_SOURCE_TYPE_SENSOR,
+    THERMOSTAT_OPTION,
+)
+from .thermostat import thermostat_update_signal
 
 
 @dataclass
@@ -38,7 +47,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     """Set up the Nest Protect sensors from a config entry."""
 
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    entities: list[NestProtectSelect] = []
+    entities: list[SelectEntity] = []
 
     SUPPORTED_KEYS: dict[str, NestProtectSelectDescription] = {
         description.key: description for description in SENSOR_DESCRIPTIONS
@@ -50,6 +59,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
                 entities.append(
                     NestProtectSelect(device, description, data.areas, data.client)
                 )
+
+    for thermostat in data.thermostats.values():
+        entities.append(NestThermostatSensorSelect(data, thermostat.device_id))
 
     async_add_devices(entities)
 
@@ -98,3 +110,125 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
         )
 
         LOGGER.debug(result)
+
+
+class NestThermostatSensorSelect(SelectEntity):
+    """Representation of a thermostat active sensor selector."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_has_entity_name = True
+    _attr_name = "Active temperature sensor"
+    _attr_icon = "mdi:thermometer-auto"
+
+    def __init__(self, data: HomeAssistantNestProtectData, thermostat_id: str) -> None:
+        """Initialize the thermostat select."""
+        self._data = data
+        self._thermostat_id = thermostat_id
+        thermostat = self.thermostat
+        self._attr_unique_id = f"{thermostat.device_id}-active_temperature_sensor"
+        self._attr_attribution = ATTRIBUTION
+        self._attr_device_info = self._build_device_info(thermostat)
+
+    @property
+    def thermostat(self) -> ThermostatData:
+        """Return the current thermostat model."""
+        return self._data.thermostats[self._thermostat_id]
+
+    @property
+    def available(self) -> bool:
+        """Return availability."""
+        return (
+            self.thermostat.available
+            and self.thermostat.remote_comfort_sensing is not None
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the selected entity option to represent the entity state."""
+        settings = self.thermostat.remote_comfort_sensing
+        if settings is None:
+            return None
+        if (
+            settings.source_type != RCS_SOURCE_TYPE_SENSOR
+            or settings.active_sensor_id is None
+        ):
+            return THERMOSTAT_OPTION
+        return self._option_by_sensor_id().get(
+            settings.active_sensor_id, THERMOSTAT_OPTION
+        )
+
+    @property
+    def options(self) -> list[str]:
+        """Return the selectable options."""
+        return [THERMOSTAT_OPTION, *self._sensor_options()]
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        settings = self.thermostat.remote_comfort_sensing
+        if settings is None:
+            raise ValueError("Thermostat observe state is not loaded yet")
+
+        target_sensor_id = None
+        if option != THERMOSTAT_OPTION:
+            target_sensor_id = self._sensor_id_by_option()[option]
+
+        self.thermostat.remote_comfort_sensing = (
+            await self._data.client.async_set_active_temperature_sensor(
+                self.thermostat.device_id,
+                settings,
+                target_sensor_id,
+            )
+        )
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Register dispatcher update callbacks."""
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                thermostat_update_signal(self._thermostat_id),
+                self._async_handle_update,
+            )
+        )
+
+    def _async_handle_update(self, thermostat: ThermostatData) -> None:
+        """Handle thermostat updates."""
+        self._data.thermostats[self._thermostat_id] = thermostat
+        self.async_write_ha_state()
+
+    def _sensor_options(self) -> list[str]:
+        return list(self._sensor_id_by_option())
+
+    def _sensor_id_by_option(self) -> dict[str, str]:
+        counts = Counter(
+            sensor.name or sensor.sensor_id
+            for sensor in self.thermostat.sensors.values()
+        )
+        options: dict[str, str] = {}
+        for sensor in self.thermostat.sensors.values():
+            label = sensor.name or sensor.sensor_id
+            if counts[label] > 1:
+                label = f"{label} ({sensor.sensor_id[-4:]})"
+            options[label] = sensor.sensor_id
+        return options
+
+    def _option_by_sensor_id(self) -> dict[str, str]:
+        return {
+            sensor_id: option
+            for option, sensor_id in self._sensor_id_by_option().items()
+        }
+
+    def _build_device_info(self, thermostat: ThermostatData) -> DeviceInfo:
+        if thermostat.official_device_identifier:
+            return DeviceInfo(
+                identifiers={(NEST_DOMAIN, thermostat.official_device_identifier)}
+            )
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, thermostat.device_id)},
+            manufacturer="Google",
+            model="Thermostat",
+            name=thermostat.name,
+            suggested_area=thermostat.where_name,
+        )

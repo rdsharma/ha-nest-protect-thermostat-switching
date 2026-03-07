@@ -43,9 +43,12 @@ from .pynest.models import (
 )
 from .thermostat import (
     apply_remote_comfort_sensing,
+    assign_runtime_official_thermostat_match,
     async_official_thermostats,
+    build_thermostat_from_observe_update,
     build_thermostats,
     build_thermostats_from_observe,
+    thermostat_discovery_signal,
     thermostat_update_signal,
 )
 
@@ -179,10 +182,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
     )
-    if thermostats:
-        entry_data.observe_task = asyncio.create_task(
-            _async_observe_thermostats(hass, entry)
-        )
+    entry_data.observe_task = asyncio.create_task(
+        _async_observe_thermostats(hass, entry)
+    )
 
     return True
 
@@ -384,6 +386,23 @@ async def _async_observe_thermostats(
 
                 thermostat = entry_data.thermostats.get(update.thermostat_id)
                 if thermostat is None:
+                    thermostat = build_thermostat_from_observe_update(
+                        update,
+                        entry_data.devices,
+                        entry_data.areas,
+                    )
+                    assign_runtime_official_thermostat_match(
+                        thermostat,
+                        entry_data.thermostats,
+                        async_official_thermostats(hass),
+                        entry.options.get(CONF_THERMOSTAT_LINKS),
+                    )
+                    entry_data.thermostats[thermostat.device_id] = thermostat
+                    async_dispatcher_send(
+                        hass,
+                        thermostat_discovery_signal(entry.entry_id),
+                        thermostat.device_id,
+                    )
                     continue
 
                 apply_remote_comfort_sensing(

@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
@@ -18,7 +19,7 @@ from .pynest.thermostat_protocol import (
     RCS_SOURCE_TYPE_SENSOR,
     THERMOSTAT_OPTION,
 )
-from .thermostat import thermostat_update_signal
+from .thermostat import thermostat_discovery_signal, thermostat_update_signal
 
 
 @dataclass
@@ -48,6 +49,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
 
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[SelectEntity] = []
+    known_thermostats = set(data.thermostats)
 
     SUPPORTED_KEYS: dict[str, NestProtectSelectDescription] = {
         description.key: description for description in SENSOR_DESCRIPTIONS
@@ -64,6 +66,21 @@ async def async_setup_entry(hass, entry, async_add_devices):
         entities.append(NestThermostatSensorSelect(data, thermostat.device_id))
 
     async_add_devices(entities)
+
+    @callback
+    def _async_add_thermostat_select(thermostat_id: str) -> None:
+        if thermostat_id in known_thermostats:
+            return
+        known_thermostats.add(thermostat_id)
+        async_add_devices([NestThermostatSensorSelect(data, thermostat_id)])
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            thermostat_discovery_signal(entry.entry_id),
+            _async_add_thermostat_select,
+        )
+    )
 
 
 class NestProtectSelect(NestDescriptiveEntity, SelectEntity):

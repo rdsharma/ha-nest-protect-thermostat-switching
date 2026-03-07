@@ -9,7 +9,11 @@ from typing import Any, TYPE_CHECKING
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
-from .const import NEST_DOMAIN, THERMOSTAT_UPDATE_SIGNAL_PREFIX
+from .const import (
+    NEST_DOMAIN,
+    THERMOSTAT_DISCOVERY_SIGNAL_PREFIX,
+    THERMOSTAT_UPDATE_SIGNAL_PREFIX,
+)
 from .pynest.enums import BucketType
 from .pynest.models import Bucket, ThermostatData, ThermostatSensor
 from .pynest.thermostat_protocol import (
@@ -37,6 +41,11 @@ class OfficialThermostatCandidate:
 def thermostat_update_signal(device_id: str) -> str:
     """Return the dispatcher signal used for thermostat updates."""
     return f"{THERMOSTAT_UPDATE_SIGNAL_PREFIX}{device_id}"
+
+
+def thermostat_discovery_signal(entry_id: str) -> str:
+    """Return the dispatcher signal used for newly discovered thermostats."""
+    return f"{THERMOSTAT_DISCOVERY_SIGNAL_PREFIX}{entry_id}"
 
 
 @callback
@@ -139,26 +148,36 @@ def build_thermostats_from_observe(
     thermostats: dict[str, ThermostatData] = {}
 
     for update in updates:
-        thermostat = ThermostatData(
-            device_id=update.thermostat_id,
-            name=_observe_thermostat_name(update.thermostat_id),
-            where_name=None,
-            where_id=None,
-            structure_id=None,
-        )
-
-        apply_remote_comfort_sensing(thermostat, update.settings, devices, areas)
-        if (
-            thermostat.name == _observe_thermostat_name(update.thermostat_id)
-            and thermostat.where_name
-        ):
-            thermostat.name = thermostat.where_name
-
+        thermostat = build_thermostat_from_observe_update(update, devices, areas)
         thermostats[thermostat.device_id] = thermostat
     _assign_official_thermostat_matches(
         thermostats, official_thermostats, thermostat_links
     )
     return thermostats
+
+
+def build_thermostat_from_observe_update(
+    update: RemoteComfortSensingObserveUpdate,
+    devices: dict[str, Bucket],
+    areas: dict[str, str],
+) -> ThermostatData:
+    """Build a thermostat model from a single observe update."""
+    thermostat = ThermostatData(
+        device_id=update.thermostat_id,
+        name=_observe_thermostat_name(update.thermostat_id),
+        where_name=None,
+        where_id=None,
+        structure_id=None,
+    )
+
+    apply_remote_comfort_sensing(thermostat, update.settings, devices, areas)
+    if (
+        thermostat.name == _observe_thermostat_name(update.thermostat_id)
+        and thermostat.where_name
+    ):
+        thermostat.name = thermostat.where_name
+
+    return thermostat
 
 
 def apply_remote_comfort_sensing(
@@ -182,6 +201,12 @@ def apply_remote_comfort_sensing(
                 name=sensor_metadata.resource_id,
             )
             continue
+
+        if thermostat.where_name is None:
+            sensor_where_id = sensor_bucket.value.get("where_id")
+            if sensor_where_id and (sensor_where_name := areas.get(sensor_where_id)):
+                thermostat.where_id = sensor_where_id
+                thermostat.where_name = sensor_where_name
 
         sensor = _build_sensor(sensor_bucket, areas)
         thermostat.sensors[sensor.sensor_id] = sensor
@@ -214,6 +239,34 @@ def thermostat_pairing_label(thermostat: ThermostatData) -> str:
     return label
 
 
+def assign_runtime_official_thermostat_match(
+    thermostat: ThermostatData,
+    existing_thermostats: dict[str, ThermostatData],
+    official_thermostats: dict[str, OfficialThermostatCandidate],
+    thermostat_links: dict[str, str] | None = None,
+) -> None:
+    """Assign an official thermostat match for a thermostat discovered at runtime."""
+    thermostat_links = thermostat_links or {}
+    used_identifier_keys = {
+        _identifier_key(existing.official_device_identifier)
+        for existing in existing_thermostats.values()
+        if existing.official_device_identifier is not None
+    }
+    unmatched_officials = {
+        identifier_key: official
+        for identifier_key, official in official_thermostats.items()
+        if identifier_key not in used_identifier_keys
+    }
+
+    manual_identifier = thermostat_links.get(thermostat.device_id)
+    if manual_identifier and (official := unmatched_officials.get(manual_identifier)):
+        _assign_official_thermostat(thermostat, official)
+        return
+
+    if official := _match_unique_official_thermostat(thermostat, unmatched_officials):
+        _assign_official_thermostat(thermostat, official)
+
+
 def _buckets_by_type(
     buckets: list[Bucket], bucket_type: BucketType
 ) -> dict[str, Bucket]:
@@ -241,7 +294,9 @@ def _structure_by_device(structures: dict[str, Bucket]) -> dict[str, str]:
 def _build_sensor(sensor_bucket: Bucket, areas: dict[str, str]) -> ThermostatSensor:
     value = sensor_bucket.value
     where_id = value.get("where_id")
-    sensor_id = value.get("resource_id") or f"DEVICE_{_bucket_id(sensor_bucket.object_key)}"
+    sensor_id = value.get("resource_id") or (
+        f"DEVICE_{_bucket_id(sensor_bucket.object_key)}"
+    )
     name = (
         value.get("name")
         or value.get("description")
@@ -332,6 +387,34 @@ def _assign_unique_matches(
         unmatched_officials.pop(official.device_identifier_key, None)
 
 
+def _match_unique_official_thermostat(
+    thermostat: ThermostatData,
+    official_thermostats: dict[str, OfficialThermostatCandidate],
+) -> OfficialThermostatCandidate | None:
+    """Return an official thermostat when name or area produce a unique match."""
+    thermostat_name = _normalize(thermostat.name)
+    if thermostat_name:
+        matches = [
+            candidate
+            for candidate in official_thermostats.values()
+            if _normalize(candidate.name) == thermostat_name
+        ]
+        if len(matches) == 1:
+            return matches[0]
+
+    thermostat_area = _normalize(thermostat.where_name)
+    if thermostat_area:
+        matches = [
+            candidate
+            for candidate in official_thermostats.values()
+            if _normalize(candidate.area_name) == thermostat_area
+        ]
+        if len(matches) == 1:
+            return matches[0]
+
+    return None
+
+
 def _assign_official_thermostat(
     thermostat: ThermostatData, official: OfficialThermostatCandidate
 ) -> None:
@@ -384,7 +467,12 @@ def _sensor_bucket_id(sensor_ref: str) -> str:
 
 
 def _thermostat_name(value: dict, where_name: str | None) -> str:
-    return value.get("name") or value.get("description") or where_name or "Nest Thermostat"
+    return (
+        value.get("name")
+        or value.get("description")
+        or where_name
+        or "Nest Thermostat"
+    )
 
 
 def _track_online(track_bucket: Bucket | None) -> bool:

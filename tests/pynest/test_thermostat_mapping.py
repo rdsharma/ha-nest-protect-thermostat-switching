@@ -276,6 +276,55 @@ def test_build_thermostats_from_observe_uses_stable_fallback_name(
     assert thermostats["DEVICE_CCA7C1000022A6CF"].name == "Nest Thermostat 22A6CF"
 
 
+def test_build_thermostat_from_single_observe_update_uses_area_name(
+    pynest_import, integration_import
+) -> None:
+    """Observe-only thermostats should pick up the associated sensor area name."""
+    enums = pynest_import("enums")
+    models = pynest_import("models")
+    protocol = pynest_import("thermostat_protocol")
+    thermostat = integration_import("thermostat")
+
+    devices = {
+        "kryptonite.18B430CE7E5A5C06": models.Bucket(
+            object_key="kryptonite.18B430CE7E5A5C06",
+            object_revision=1,
+            object_timestamp=1,
+            value={
+                "resource_id": "DEVICE_18B430CE7E5A5C06",
+                "where_id": "where1",
+                "current_temperature": 7300,
+            },
+            type=enums.BucketType.KRYPTONITE,
+        )
+    }
+    update = protocol.RemoteComfortSensingObserveUpdate(
+        thermostat_id="DEVICE_CCA7C1000022A6CF",
+        trait_label="remote_comfort_sensing_settings",
+        settings=protocol.RemoteComfortSensingSettings(
+            rcs_control_mode=1,
+            source_type=protocol.RCS_SOURCE_TYPE_SENSOR,
+            active_sensor_id="DEVICE_18B430CE7E5A5C06",
+            associated_sensors=(
+                protocol.RcsSensorMetadata(
+                    resource_id="DEVICE_18B430CE7E5A5C06",
+                    vendor_id=9050,
+                    product_id=26,
+                ),
+            ),
+            remembered_sensor_id="DEVICE_18B430CE7E5A5C06",
+            raw_payload=b"payload",
+        ),
+    )
+
+    discovered = thermostat.build_thermostat_from_observe_update(
+        update, devices, {"where1": "Master Bedroom"}
+    )
+
+    assert discovered.name == "Master Bedroom"
+    assert discovered.where_name == "Master Bedroom"
+
+
 def test_thermostat_pairing_label_includes_readable_name_and_suffix(
     pynest_import, integration_import
 ) -> None:
@@ -311,3 +360,75 @@ def test_official_thermostat_label_includes_area_when_needed(
     )
 
     assert thermostat.official_thermostat_label(candidate) == "Thermostat (Hallway)"
+
+
+def test_runtime_official_match_ignores_already_assigned_thermostats(
+    pynest_import, integration_import
+) -> None:
+    """Runtime discovery should not reuse an official thermostat already assigned."""
+    models = pynest_import("models")
+    thermostat = integration_import("thermostat")
+
+    official = thermostat.OfficialThermostatCandidate(
+        device_entry_id="device-entry-id",
+        device_identifier=("nest", "only-id"),
+        device_identifier_key="nest\x1fonly-id",
+        name="Living Room",
+        area_name="Living Room",
+    )
+    existing = models.ThermostatData(
+        device_id="DEVICE_EXISTING",
+        name="Living Room",
+        where_name="Living Room",
+        where_id=None,
+        structure_id=None,
+        official_device_identifier=("nest", "only-id"),
+        official_device_entry_id="device-entry-id",
+    )
+    discovered = models.ThermostatData(
+        device_id="DEVICE_NEW",
+        name="Living Room",
+        where_name="Living Room",
+        where_id=None,
+        structure_id=None,
+    )
+
+    thermostat.assign_runtime_official_thermostat_match(
+        discovered,
+        {"DEVICE_EXISTING": existing},
+        {"nest\x1fonly-id": official},
+    )
+
+    assert discovered.official_device_identifier is None
+
+
+def test_runtime_official_match_honors_manual_link(
+    pynest_import, integration_import
+) -> None:
+    """Runtime discovery should honor a configured manual pairing override."""
+    models = pynest_import("models")
+    thermostat = integration_import("thermostat")
+
+    official = thermostat.OfficialThermostatCandidate(
+        device_entry_id="device-entry-id",
+        device_identifier=("nest", "only-id"),
+        device_identifier_key="nest\x1fonly-id",
+        name="Upstairs",
+        area_name="Upstairs",
+    )
+    discovered = models.ThermostatData(
+        device_id="DEVICE_NEW",
+        name="Nest Thermostat 22A6CF",
+        where_name=None,
+        where_id=None,
+        structure_id=None,
+    )
+
+    thermostat.assign_runtime_official_thermostat_match(
+        discovered,
+        {},
+        {"nest\x1fonly-id": official},
+        {"DEVICE_NEW": "nest\x1fonly-id"},
+    )
+
+    assert discovered.official_device_identifier == ("nest", "only-id")

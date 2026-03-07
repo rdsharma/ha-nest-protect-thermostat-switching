@@ -19,6 +19,7 @@ CONF_COOKIES: Final = "cookies"
 CONF_THERMOSTAT_LINKS: Final = "thermostat_links"
 NEST_DOMAIN: Final = "nest"
 THERMOSTAT_UPDATE_SIGNAL_PREFIX: Final = f"{DOMAIN}_thermostat_"
+THERMOSTAT_DISCOVERY_SIGNAL_PREFIX: Final = f"{DOMAIN}_thermostat_discovered_"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,

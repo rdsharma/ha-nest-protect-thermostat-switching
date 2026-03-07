@@ -386,11 +386,14 @@ class NestClient:
                 )
 
             buffer = b""
-            async for chunk in response.content.iter_any():
+            async for chunk, end_of_http_chunk in response.content.iter_chunks():
                 if not chunk:
                     continue
 
                 buffer += chunk.strip()
+                if not end_of_http_chunk:
+                    continue
+
                 updates, buffer = decode_observe_buffer(buffer)
                 for update in updates:
                     yield update

@@ -180,7 +180,7 @@ class NestThermostatSensorSelect(SelectEntity):
                 target_sensor_id,
             )
         )
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Register dispatcher update callbacks."""

@@ -99,7 +99,7 @@ class NestEntity(Entity):
         """Update the entities state."""
 
         self.bucket = bucket
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()
 
 
 class NestDescriptiveEntity(NestEntity):

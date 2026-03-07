@@ -190,15 +190,15 @@ def apply_remote_comfort_sensing(
     thermostat.remote_comfort_sensing = settings
 
     for sensor_metadata in settings.associated_sensors:
-        if sensor_metadata.resource_id in thermostat.sensors:
-            continue
-
         bucket_id = sensor_metadata.resource_id.removeprefix("DEVICE_")
         sensor_bucket = devices.get(f"kryptonite.{bucket_id}")
         if sensor_bucket is None:
-            thermostat.sensors[sensor_metadata.resource_id] = ThermostatSensor(
-                sensor_id=sensor_metadata.resource_id,
-                name=sensor_metadata.resource_id,
+            thermostat.sensors.setdefault(
+                sensor_metadata.resource_id,
+                ThermostatSensor(
+                    sensor_id=sensor_metadata.resource_id,
+                    name=sensor_metadata.resource_id,
+                ),
             )
             continue
 

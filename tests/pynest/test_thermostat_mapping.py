@@ -432,3 +432,66 @@ def test_runtime_official_match_honors_manual_link(
     )
 
     assert discovered.official_device_identifier == ("nest", "only-id")
+
+
+def test_apply_remote_comfort_sensing_backfills_placeholder_sensor_metadata(
+    pynest_import, integration_import
+) -> None:
+    """Placeholder sensor names should be replaced when bucket metadata arrives."""
+    enums = pynest_import("enums")
+    models = pynest_import("models")
+    protocol = pynest_import("thermostat_protocol")
+    thermostat = integration_import("thermostat")
+
+    discovered = models.ThermostatData(
+        device_id="DEVICE_CCA7C1000022A6CF",
+        name="Nest Thermostat 22A6CF",
+        where_name=None,
+        where_id=None,
+        structure_id=None,
+    )
+    settings = protocol.RemoteComfortSensingSettings(
+        rcs_control_mode=1,
+        source_type=protocol.RCS_SOURCE_TYPE_SENSOR,
+        active_sensor_id="DEVICE_18B430CE7E5A5C06",
+        associated_sensors=(
+            protocol.RcsSensorMetadata(
+                resource_id="DEVICE_18B430CE7E5A5C06",
+                vendor_id=9050,
+                product_id=26,
+            ),
+        ),
+        remembered_sensor_id="DEVICE_18B430CE7E5A5C06",
+        raw_payload=b"payload",
+    )
+
+    thermostat.apply_remote_comfort_sensing(discovered, settings, {}, {})
+    assert (
+        discovered.sensors["DEVICE_18B430CE7E5A5C06"].name
+        == "DEVICE_18B430CE7E5A5C06"
+    )
+
+    devices = {
+        "kryptonite.18B430CE7E5A5C06": models.Bucket(
+            object_key="kryptonite.18B430CE7E5A5C06",
+            object_revision=1,
+            object_timestamp=1,
+            value={
+                "resource_id": "DEVICE_18B430CE7E5A5C06",
+                "name": "Master Bedroom",
+                "where_id": "where1",
+                "current_temperature": 7300,
+            },
+            type=enums.BucketType.KRYPTONITE,
+        )
+    }
+    thermostat.apply_remote_comfort_sensing(
+        discovered,
+        settings,
+        devices,
+        {"where1": "Master Bedroom"},
+    )
+
+    sensor = discovered.sensors["DEVICE_18B430CE7E5A5C06"]
+    assert sensor.name == "Master Bedroom"
+    assert sensor.bucket_key == "kryptonite.18B430CE7E5A5C06"

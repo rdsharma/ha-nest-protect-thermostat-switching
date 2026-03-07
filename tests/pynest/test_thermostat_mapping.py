@@ -143,6 +143,46 @@ def test_manual_links_override_auto_match(pynest_import, integration_import) -> 
     )
 
 
+def test_single_official_candidate_is_not_reused_for_multiple_thermostats(
+    pynest_import, integration_import
+) -> None:
+    """A single official thermostat should not auto-link to multiple unofficial ones."""
+    enums = pynest_import("enums")
+    models = pynest_import("models")
+    thermostat = integration_import("thermostat")
+
+    buckets = [
+        models.Bucket(
+            object_key="device.CCA7C1000022A6CF",
+            object_revision=1,
+            object_timestamp=1,
+            value={"resource_id": "DEVICE_CCA7C1000022A6CF", "name": "Upstairs"},
+            type=enums.BucketType.DEVICE,
+        ),
+        models.Bucket(
+            object_key="device.CCA7C1000022A6D0",
+            object_revision=1,
+            object_timestamp=1,
+            value={"resource_id": "DEVICE_CCA7C1000022A6D0", "name": "Downstairs"},
+            type=enums.BucketType.DEVICE,
+        ),
+    ]
+    official = {
+        "only-id": thermostat.OfficialThermostatCandidate(
+            device_entry_id="device-entry-id",
+            device_identifier=("nest", "only-id"),
+            device_identifier_key="only-id",
+            name="Living Room",
+            area_name="Living Room",
+        )
+    }
+
+    thermostats = thermostat.build_thermostats(buckets, {}, official)
+
+    assert thermostats["DEVICE_CCA7C1000022A6CF"].official_device_identifier is None
+    assert thermostats["DEVICE_CCA7C1000022A6D0"].official_device_identifier is None
+
+
 def test_build_thermostats_from_observe_uses_remote_comfort_updates(
     pynest_import, integration_import
 ) -> None:
@@ -207,3 +247,67 @@ def test_build_thermostats_from_observe_uses_remote_comfort_updates(
     assert discovered.official_device_identifier == ("nest", "only-id")
     assert list(discovered.sensors) == ["DEVICE_18B430CE7E5A5C06"]
     assert discovered.active_sensor_id == "DEVICE_18B430CE7E5A5C06"
+
+
+def test_build_thermostats_from_observe_uses_stable_fallback_name(
+    pynest_import, integration_import
+) -> None:
+    """Observe-only thermostats should have a readable fallback name."""
+    protocol = pynest_import("thermostat_protocol")
+    thermostat = integration_import("thermostat")
+
+    updates = [
+        protocol.RemoteComfortSensingObserveUpdate(
+            thermostat_id="DEVICE_CCA7C1000022A6CF",
+            trait_label="remote_comfort_sensing_settings",
+            settings=protocol.RemoteComfortSensingSettings(
+                rcs_control_mode=1,
+                source_type=protocol.RCS_SOURCE_TYPE_THERMOSTAT,
+                active_sensor_id=None,
+                associated_sensors=(),
+                remembered_sensor_id=None,
+                raw_payload=b"payload",
+            ),
+        )
+    ]
+
+    thermostats = thermostat.build_thermostats_from_observe(updates, {}, {}, {})
+
+    assert thermostats["DEVICE_CCA7C1000022A6CF"].name == "Nest Thermostat 22A6CF"
+
+
+def test_thermostat_pairing_label_includes_readable_name_and_suffix(
+    pynest_import, integration_import
+) -> None:
+    """Pairing labels should be readable and stable."""
+    models = pynest_import("models")
+    thermostat = integration_import("thermostat")
+
+    label = thermostat.thermostat_pairing_label(
+        models.ThermostatData(
+            device_id="DEVICE_CCA7C1000022A6CF",
+            name="Living Room",
+            where_name="Living Room",
+            where_id=None,
+            structure_id=None,
+        )
+    )
+
+    assert label == "Living Room (22A6CF)"
+
+
+def test_official_thermostat_label_includes_area_when_needed(
+    pynest_import, integration_import
+) -> None:
+    """Official thermostat labels should include the area when it adds context."""
+    thermostat = integration_import("thermostat")
+
+    candidate = thermostat.OfficialThermostatCandidate(
+        device_entry_id="device-entry-id",
+        device_identifier=("nest", "only-id"),
+        device_identifier_key="only-id",
+        name="Thermostat",
+        area_name="Hallway",
+    )
+
+    assert thermostat.official_thermostat_label(candidate) == "Thermostat (Hallway)"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from base64 import b64encode
+
 
 INTERNAL_TRAIT_HEX = (
     "08011204080112001a0022200a190a174445564943455f31384234333043453745354135433036"
@@ -88,3 +90,36 @@ def test_encode_batch_update_state_request(pynest_import) -> None:
     assert update.trait_id.request_id == "test-request-id"
     assert update.property.type_url == protocol.REMOTE_COMFORT_SENSING_TYPE_URL
     assert update.property.value == bytes.fromhex(INTERNAL_TRAIT_HEX)
+
+
+def test_decode_observe_buffer_handles_split_base64_chunks(pynest_import) -> None:
+    """Observe decoding should tolerate a payload split across HTTP chunks."""
+    gateway_pb2 = pynest_import("_nest_gateway_pb2")
+    protocol = pynest_import("thermostat_protocol")
+
+    response = gateway_pb2.ObserveResponse()
+    response.trait_states.add(
+        trait_id=gateway_pb2.TraitId(
+            resource_id=THERMOSTAT_ID,
+            trait_label=protocol.REMOTE_COMFORT_SENSING_TRAIT_LABEL,
+        ),
+        patch=gateway_pb2.Patch(
+            values={
+                "type_url": protocol.REMOTE_COMFORT_SENSING_TYPE_URL,
+                "value": bytes.fromhex(INTERNAL_TRAIT_HEX),
+            }
+        ),
+    )
+    stream_body = gateway_pb2.StreamBody(message=[response.SerializeToString()])
+    encoded = b64encode(stream_body.SerializeToString())
+    midpoint = len(encoded) // 2
+
+    updates, leftover = protocol.decode_observe_buffer(encoded[:midpoint])
+    assert updates == []
+    assert leftover == encoded[:midpoint]
+
+    updates, leftover = protocol.decode_observe_buffer(leftover + encoded[midpoint:])
+    assert leftover == b""
+    assert len(updates) == 1
+    assert updates[0].thermostat_id == THERMOSTAT_ID
+    assert updates[0].settings.source_type == protocol.RCS_SOURCE_TYPE_THERMOSTAT

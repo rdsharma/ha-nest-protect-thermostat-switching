@@ -120,14 +120,10 @@ def build_thermostats(
                 if sensor is not None:
                     thermostat.sensors[sensor.sensor_id] = sensor
 
-        if official := _match_official_thermostat(
-            thermostat, official_thermostats, thermostat_links
-        ):
-            thermostat.official_device_identifier = official.device_identifier
-            thermostat.official_device_entry_id = official.device_entry_id
-
         thermostats[thermostat.device_id] = thermostat
-
+    _assign_official_thermostat_matches(
+        thermostats, official_thermostats, thermostat_links
+    )
     return thermostats
 
 
@@ -145,28 +141,23 @@ def build_thermostats_from_observe(
     for update in updates:
         thermostat = ThermostatData(
             device_id=update.thermostat_id,
-            name="Nest Thermostat",
+            name=_observe_thermostat_name(update.thermostat_id),
             where_name=None,
             where_id=None,
             structure_id=None,
         )
 
-        if official := _match_official_thermostat(
-            thermostat, official_thermostats, thermostat_links
-        ):
-            thermostat.official_device_identifier = official.device_identifier
-            thermostat.official_device_entry_id = official.device_entry_id
-            if official.name:
-                thermostat.name = official.name
-            if official.area_name:
-                thermostat.where_name = official.area_name
-
         apply_remote_comfort_sensing(thermostat, update.settings, devices, areas)
-        if thermostat.name == "Nest Thermostat" and thermostat.where_name:
+        if (
+            thermostat.name == _observe_thermostat_name(update.thermostat_id)
+            and thermostat.where_name
+        ):
             thermostat.name = thermostat.where_name
 
         thermostats[thermostat.device_id] = thermostat
-
+    _assign_official_thermostat_matches(
+        thermostats, official_thermostats, thermostat_links
+    )
     return thermostats
 
 
@@ -202,15 +193,25 @@ def official_thermostat_options(
     """Build option labels for thermostat pairing."""
     options: dict[str, str] = {}
     for identifier_key, thermostat in official_thermostats.items():
-        label = (
-            thermostat.name
-            or thermostat.area_name
-            or thermostat.device_identifier[-1]
-        )
-        if thermostat.area_name and thermostat.area_name not in label:
-            label = f"{label} ({thermostat.area_name})"
-        options[identifier_key] = label
+        options[identifier_key] = official_thermostat_label(thermostat)
     return options
+
+
+def official_thermostat_label(thermostat: OfficialThermostatCandidate) -> str:
+    """Return a display label for an official thermostat candidate."""
+    label = thermostat.name or thermostat.area_name or thermostat.device_identifier[-1]
+    if thermostat.area_name and thermostat.area_name not in label:
+        label = f"{label} ({thermostat.area_name})"
+    return label
+
+
+def thermostat_pairing_label(thermostat: ThermostatData) -> str:
+    """Return a readable label for an unofficial thermostat model."""
+    label = thermostat.name or thermostat.where_name or "Nest Thermostat"
+    suffix = thermostat.device_id.removeprefix("DEVICE_")[-6:]
+    if suffix not in label:
+        label = f"{label} ({suffix})"
+    return label
 
 
 def _buckets_by_type(
@@ -256,41 +257,97 @@ def _build_sensor(sensor_bucket: Bucket, areas: dict[str, str]) -> ThermostatSen
     )
 
 
-def _match_official_thermostat(
-    thermostat: ThermostatData,
+def _assign_official_thermostat_matches(
+    thermostats: dict[str, ThermostatData],
     official_thermostats: dict[str, OfficialThermostatCandidate],
     thermostat_links: dict[str, str],
-) -> OfficialThermostatCandidate | None:
-    manual_identifier = thermostat_links.get(thermostat.device_id)
-    if manual_identifier:
-        return official_thermostats.get(manual_identifier)
+) -> None:
+    """Assign official thermostat matches without reusing candidates."""
+    unmatched_thermostats = dict(thermostats)
+    unmatched_officials = dict(official_thermostats)
 
-    candidates = list(official_thermostats.values())
-    if len(candidates) == 1:
-        return candidates[0]
+    for thermostat_id, thermostat in list(unmatched_thermostats.items()):
+        manual_identifier = thermostat_links.get(thermostat_id)
+        if not manual_identifier:
+            continue
+        if official := unmatched_officials.pop(manual_identifier, None):
+            _assign_official_thermostat(thermostat, official)
+            unmatched_thermostats.pop(thermostat_id, None)
 
-    thermostat_name = _normalize(thermostat.name)
-    thermostat_area = _normalize(thermostat.where_name)
+    _assign_unique_matches(
+        unmatched_thermostats,
+        unmatched_officials,
+        lambda thermostat: _normalize(thermostat.name),
+        lambda official: _normalize(official.name),
+    )
+    _assign_unique_matches(
+        unmatched_thermostats,
+        unmatched_officials,
+        lambda thermostat: _normalize(thermostat.where_name),
+        lambda official: _normalize(official.area_name),
+    )
 
-    if thermostat_name:
-        matches = [
-            candidate
-            for candidate in candidates
-            if _normalize(candidate.name) == thermostat_name
-        ]
-        if len(matches) == 1:
-            return matches[0]
+    if len(unmatched_thermostats) == 1 and len(unmatched_officials) == 1:
+        thermostat = next(iter(unmatched_thermostats.values()))
+        official = next(iter(unmatched_officials.values()))
+        _assign_official_thermostat(thermostat, official)
 
-    if thermostat_area:
-        matches = [
-            candidate
-            for candidate in candidates
-            if _normalize(candidate.area_name) == thermostat_area
-        ]
-        if len(matches) == 1:
-            return matches[0]
 
-    return None
+def _assign_unique_matches(
+    unmatched_thermostats: dict[str, ThermostatData],
+    unmatched_officials: dict[str, OfficialThermostatCandidate],
+    thermostat_key: Any,
+    official_key: Any,
+) -> None:
+    """Assign pairings for keys that are unique on both sides."""
+    thermostat_groups: dict[str, list[ThermostatData]] = {}
+    official_groups: dict[str, list[OfficialThermostatCandidate]] = {}
+
+    for thermostat in unmatched_thermostats.values():
+        key = thermostat_key(thermostat)
+        if key:
+            thermostat_groups.setdefault(key, []).append(thermostat)
+
+    for official in unmatched_officials.values():
+        key = official_key(official)
+        if key:
+            official_groups.setdefault(key, []).append(official)
+
+    for key, thermostat_group in thermostat_groups.items():
+        if len(thermostat_group) != 1:
+            continue
+        official_group = official_groups.get(key)
+        if official_group is None or len(official_group) != 1:
+            continue
+
+        thermostat = thermostat_group[0]
+        official = official_group[0]
+        if thermostat.device_id not in unmatched_thermostats:
+            continue
+        if official.device_identifier_key not in unmatched_officials:
+            continue
+
+        _assign_official_thermostat(thermostat, official)
+        unmatched_thermostats.pop(thermostat.device_id, None)
+        unmatched_officials.pop(official.device_identifier_key, None)
+
+
+def _assign_official_thermostat(
+    thermostat: ThermostatData, official: OfficialThermostatCandidate
+) -> None:
+    """Link an unofficial thermostat model to an official Nest device."""
+    thermostat.official_device_identifier = official.device_identifier
+    thermostat.official_device_entry_id = official.device_entry_id
+    if official.name:
+        thermostat.name = official.name
+    if official.area_name:
+        thermostat.where_name = official.area_name
+
+
+def _observe_thermostat_name(device_id: str) -> str:
+    """Return a readable fallback name for observe-only thermostat discovery."""
+    suffix = device_id.removeprefix("DEVICE_")[-6:]
+    return f"Nest Thermostat {suffix}"
 
 
 def _identifier_key(identifier: tuple[str, ...]) -> str:

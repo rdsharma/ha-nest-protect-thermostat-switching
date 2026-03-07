@@ -1,4 +1,5 @@
 """Tests for NestClient."""
+import asyncio
 from unittest.mock import patch
 
 from aiohttp import web
@@ -116,3 +117,54 @@ async def test_get_first_data_success(socket_enabled, aiohttp_client, pynest_imp
     assert json_request == NEST_REQUEST
     assert result.updated_buckets == []
     assert result.service_urls["urls"]["transport_url"] == "https://xxxx.transport.home.nest.com"
+
+
+async def test_bootstrap_remote_comfort_sensing_collects_latest_update_per_thermostat(
+    pynest_import, monkeypatch
+):
+    """Bootstrap should retain the latest update seen for each thermostat."""
+    client_module = pynest_import("client")
+    protocol = pynest_import("thermostat_protocol")
+    NestClient = client_module.NestClient
+
+    first = protocol.RemoteComfortSensingObserveUpdate(
+        thermostat_id="DEVICE_CCA7C1000022A6CF",
+        trait_label=protocol.REMOTE_COMFORT_SENSING_TRAIT_LABEL,
+        settings=protocol.RemoteComfortSensingSettings(
+            rcs_control_mode=1,
+            source_type=protocol.RCS_SOURCE_TYPE_SENSOR,
+            active_sensor_id="DEVICE_18B430CE7E5A5C06",
+            associated_sensors=(),
+            remembered_sensor_id="DEVICE_18B430CE7E5A5C06",
+            raw_payload=b"sensor",
+        ),
+    )
+    second = protocol.RemoteComfortSensingObserveUpdate(
+        thermostat_id="DEVICE_CCA7C1000022A6CF",
+        trait_label=protocol.REMOTE_COMFORT_SENSING_TRAIT_LABEL,
+        settings=protocol.RemoteComfortSensingSettings(
+            rcs_control_mode=1,
+            source_type=protocol.RCS_SOURCE_TYPE_THERMOSTAT,
+            active_sensor_id=None,
+            associated_sensors=(),
+            remembered_sensor_id="DEVICE_18B430CE7E5A5C06",
+            raw_payload=b"thermostat",
+        ),
+    )
+
+    nest_client = NestClient(session=object())
+
+    async def fake_observe(_access_token):
+        yield first
+        yield second
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(nest_client, "observe_remote_comfort_sensing", fake_observe)
+
+    updates = await nest_client.bootstrap_remote_comfort_sensing(
+        "access-token", initial_timeout=0.01, settle_timeout=0.01
+    )
+
+    assert len(updates) == 1
+    assert updates[0].settings.source_type == protocol.RCS_SOURCE_TYPE_THERMOSTAT
+    assert updates[0].settings.active_sensor_id is None

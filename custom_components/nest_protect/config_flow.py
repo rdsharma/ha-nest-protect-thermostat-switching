@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers import selector
 import voluptuous as vol
 
 from .const import (
@@ -25,7 +26,11 @@ from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
 from .pynest.exceptions import BadCredentialsException
-from .thermostat import async_official_thermostats, official_thermostat_options
+from .thermostat import (
+    async_official_thermostats,
+    official_thermostat_options,
+    thermostat_pairing_label,
+)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -230,10 +235,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if entry_data is None or not entry_data.thermostats:
             return self.async_create_entry(title="", data=self._config_entry.options)
 
+        thermostat_field_map = {
+            thermostat_pairing_label(thermostat): thermostat.device_id
+            for thermostat in entry_data.thermostats.values()
+        }
+
         if user_input is not None:
             links = {
-                thermostat_id: official_id
-                for thermostat_id, official_id in user_input.items()
+                thermostat_field_map[field_label]: official_id
+                for field_label, official_id in user_input.items()
                 if official_id
             }
             return self.async_create_entry(
@@ -252,10 +262,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Optional(
-                    thermostat.device_id,
-                    default=configured_links.get(thermostat.device_id, ""),
-                ): vol.In(official_options)
-                for thermostat in entry_data.thermostats.values()
+                    field_label,
+                    default=configured_links.get(thermostat_id, ""),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(value=value, label=label)
+                            for value, label in official_options.items()
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+                for field_label, thermostat_id in sorted(thermostat_field_map.items())
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

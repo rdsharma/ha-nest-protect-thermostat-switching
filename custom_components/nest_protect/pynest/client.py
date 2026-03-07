@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from random import randint
 import time
@@ -393,6 +394,28 @@ class NestClient:
                 updates, buffer = decode_observe_buffer(buffer)
                 for update in updates:
                     yield update
+
+    async def bootstrap_remote_comfort_sensing(
+        self,
+        nest_access_token: str,
+        initial_timeout: float = 8.0,
+        settle_timeout: float = 0.75,
+    ) -> list[RemoteComfortSensingObserveUpdate]:
+        """Collect an initial snapshot of remote comfort sensing updates."""
+        updates: dict[str, RemoteComfortSensingObserveUpdate] = {}
+        stream = self.observe_remote_comfort_sensing(nest_access_token)
+
+        try:
+            while True:
+                timeout = settle_timeout if updates else initial_timeout
+                update = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
+                updates[update.thermostat_id] = update
+        except TimeoutError:
+            return list(updates.values())
+        except StopAsyncIteration:
+            return list(updates.values())
+        finally:
+            await stream.aclose()
 
     async def update_objects(
         self,

@@ -45,6 +45,7 @@ from .thermostat import (
     apply_remote_comfort_sensing,
     async_official_thermostats,
     build_thermostats,
+    build_thermostats_from_observe,
     thermostat_update_signal,
 )
 
@@ -141,6 +142,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         official_thermostats,
         entry.options.get(CONF_THERMOSTAT_LINKS),
     )
+    if not thermostats:
+        try:
+            observe_updates = await client.bootstrap_remote_comfort_sensing(
+                nest.access_token
+            )
+        except Exception as exception:  # pylint: disable=broad-except
+            LOGGER.debug("Observe bootstrap failed: %s", exception)
+        else:
+            thermostats = build_thermostats_from_observe(
+                observe_updates,
+                devices,
+                areas,
+                official_thermostats,
+                entry.options.get(CONF_THERMOSTAT_LINKS),
+            )
     LOGGER.debug(
         "Discovered %s unofficial thermostats from %s device buckets and %s rcs_settings buckets; %s official Nest thermostat candidates",
         len(thermostats),

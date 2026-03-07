@@ -141,3 +141,69 @@ def test_manual_links_override_auto_match(pynest_import, integration_import) -> 
         thermostats["DEVICE_CCA7C1000022A6CF"].official_device_identifier
         == ("nest", "second-id")
     )
+
+
+def test_build_thermostats_from_observe_uses_remote_comfort_updates(
+    pynest_import, integration_import
+) -> None:
+    """Build thermostat models from observe updates when legacy buckets are absent."""
+    models = pynest_import("models")
+    protocol = pynest_import("thermostat_protocol")
+    thermostat = integration_import("thermostat")
+
+    official = {
+        "only-id": thermostat.OfficialThermostatCandidate(
+            device_entry_id="device-entry-id",
+            device_identifier=("nest", "only-id"),
+            device_identifier_key="only-id",
+            name="Hallway Thermostat",
+            area_name="Hallway",
+        )
+    }
+    devices = {
+        "kryptonite.18B430CE7E5A5C06": models.Bucket(
+            object_key="kryptonite.18B430CE7E5A5C06",
+            object_revision=1,
+            object_timestamp=1,
+            value={
+                "resource_id": "DEVICE_18B430CE7E5A5C06",
+                "where_id": "where_bed",
+                "serial_number": "SENSOR1",
+                "current_temperature": 70.0,
+            },
+            type="kryptonite",
+        )
+    }
+    updates = [
+        protocol.RemoteComfortSensingObserveUpdate(
+            thermostat_id="DEVICE_CCA7C1000022A6CF",
+            trait_label="remote_comfort_sensing_settings",
+            settings=protocol.RemoteComfortSensingSettings(
+                rcs_control_mode=1,
+                source_type=protocol.RCS_SOURCE_TYPE_SENSOR,
+                active_sensor_id="DEVICE_18B430CE7E5A5C06",
+                associated_sensors=(
+                    protocol.RcsSensorMetadata(
+                        resource_id="DEVICE_18B430CE7E5A5C06",
+                        vendor_id=9050,
+                        product_id=26,
+                    ),
+                ),
+                remembered_sensor_id="DEVICE_18B430CE7E5A5C06",
+                raw_payload=b"payload",
+            ),
+        )
+    ]
+
+    thermostats = thermostat.build_thermostats_from_observe(
+        updates,
+        devices,
+        {"where_bed": "Bedroom"},
+        official,
+    )
+
+    discovered = thermostats["DEVICE_CCA7C1000022A6CF"]
+    assert discovered.name == "Hallway Thermostat"
+    assert discovered.official_device_identifier == ("nest", "only-id")
+    assert list(discovered.sensors) == ["DEVICE_18B430CE7E5A5C06"]
+    assert discovered.active_sensor_id == "DEVICE_18B430CE7E5A5C06"

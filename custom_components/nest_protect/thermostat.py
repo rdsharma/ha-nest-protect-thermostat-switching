@@ -12,7 +12,10 @@ from homeassistant.helpers import device_registry as dr
 from .const import NEST_DOMAIN, THERMOSTAT_UPDATE_SIGNAL_PREFIX
 from .pynest.enums import BucketType
 from .pynest.models import Bucket, ThermostatData, ThermostatSensor
-from .pynest.thermostat_protocol import RemoteComfortSensingSettings
+from .pynest.thermostat_protocol import (
+    RemoteComfortSensingObserveUpdate,
+    RemoteComfortSensingSettings,
+)
 
 _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 
@@ -122,6 +125,45 @@ def build_thermostats(
         ):
             thermostat.official_device_identifier = official.device_identifier
             thermostat.official_device_entry_id = official.device_entry_id
+
+        thermostats[thermostat.device_id] = thermostat
+
+    return thermostats
+
+
+def build_thermostats_from_observe(
+    updates: list[RemoteComfortSensingObserveUpdate],
+    devices: dict[str, Bucket],
+    areas: dict[str, str],
+    official_thermostats: dict[str, OfficialThermostatCandidate],
+    thermostat_links: dict[str, str] | None = None,
+) -> dict[str, ThermostatData]:
+    """Build thermostat models from observe updates when legacy buckets are absent."""
+    thermostat_links = thermostat_links or {}
+    thermostats: dict[str, ThermostatData] = {}
+
+    for update in updates:
+        thermostat = ThermostatData(
+            device_id=update.thermostat_id,
+            name="Nest Thermostat",
+            where_name=None,
+            where_id=None,
+            structure_id=None,
+        )
+
+        if official := _match_official_thermostat(
+            thermostat, official_thermostats, thermostat_links
+        ):
+            thermostat.official_device_identifier = official.device_identifier
+            thermostat.official_device_entry_id = official.device_entry_id
+            if official.name:
+                thermostat.name = official.name
+            if official.area_name:
+                thermostat.where_name = official.area_name
+
+        apply_remote_comfort_sensing(thermostat, update.settings, devices, areas)
+        if thermostat.name == "Nest Thermostat" and thermostat.where_name:
+            thermostat.name = thermostat.where_name
 
         thermostats[thermostat.device_id] = thermostat
 
